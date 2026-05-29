@@ -85,9 +85,7 @@ def parse_li_sheet(df, filter_end_date):
     if not rows:
         return []
 
-    # ─────────────────────────────────────────────────────────
     # KEEP ONLY LATEST DATE PER IO
-    # ─────────────────────────────────────────────────────────
 
     latest_per_io = {}
 
@@ -231,7 +229,7 @@ budget_file = st.file_uploader(
 )
 
 # ─────────────────────────────────────────────────────────────────────
-# PROCESS FILES IMMEDIATELY
+# PROCESS FILES
 # ─────────────────────────────────────────────────────────────────────
 
 if campaign_files:
@@ -293,7 +291,7 @@ if budget_file:
         st.error(f"Error processing budget file: {ex}")
 
 # ─────────────────────────────────────────────────────────────────────
-# RUN VALIDATION BUTTON
+# RUN BUTTON
 # ─────────────────────────────────────────────────────────────────────
 
 if st.button("🚀 Run Validation"):
@@ -364,10 +362,6 @@ if st.session_state.processed:
             f"Expected June Total: €{expected_total:,.2f}"
         )
 
-        st.warning(
-            f"Difference: €{diff:+,.2f}"
-        )
-
         approve = st.checkbox(
             "This mismatch is intentional",
             key=f"approve_{io}",
@@ -376,6 +370,8 @@ if st.session_state.processed:
         st.session_state.approved_mismatch[
             io
         ] = approve
+
+        # SORT LIs ALPHABETICALLY
 
         for li in sorted(
             lis,
@@ -401,16 +397,21 @@ if st.session_state.processed:
                     li["prev_budget"],
                 )
 
-                new_val = st.number_input(
+                new_val = st.text_input(
                     f"{io}_{li_id}",
-                    value=float(current_val),
-                    min_value=0.0,
-                    step=1.0,
+                    value=str(current_val),
                 )
 
-                st.session_state.jun_inputs[
-                    li_id
-                ] = new_val
+                try:
+
+                    st.session_state.jun_inputs[
+                        li_id
+                    ] = float(new_val)
+
+                except:
+                    pass
+
+        # LIVE VALIDATION
 
         updated_total = round(
             sum(
@@ -435,7 +436,7 @@ if st.session_state.processed:
         else:
 
             st.warning(
-                f"⚠ Remaining Difference: €{updated_diff:+,.2f}"
+                f"Remaining Difference: €{updated_diff:+,.2f}"
             )
 
     if not mismatch_found:
