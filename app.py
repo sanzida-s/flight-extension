@@ -488,37 +488,32 @@ if st.session_state.processed:
 # FINAL OUTPUT
 # ─────────────────────────────────────────────────────────────────────────────
 
-if (
-    st.session_state.processed
-    and st.session_state.li_data
-):
+st.header("3. Final Output")
 
-    st.header("3. Final Output")
+df_out = build_output(
+    month_start,
+    month_end,
+)
 
-    df_out = build_output(
-        month_start,
-        month_end,
+if len(df_out) > 0:
+
+    st.dataframe(
+        df_out,
+        use_container_width=True,
+        hide_index=True,
     )
 
-    if len(df_out) > 0:
+    csv = df_out.to_csv(index=False)
 
-        st.dataframe(
-            df_out,
-            use_container_width=True,
-            hide_index=True,
-        )
+    st.download_button(
+        "⬇️ Download CSV",
+        csv,
+        file_name="flight_extension.csv",
+        mime="text/csv",
+    )
 
-        csv = df_out.to_csv(index=False)
+else:
 
-        st.download_button(
-            "⬇️ Download CSV",
-            csv,
-            file_name="flight_extension.csv",
-            mime="text/csv",
-        )
-
-    else:
-
-        st.warning(
-            "No output rows generated."
-        )
+    st.info(
+        "Run Validation to generate output rows."
+    )
