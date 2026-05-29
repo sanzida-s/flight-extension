@@ -31,6 +31,15 @@ if "jun_inputs" not in st.session_state:
 if "approved_mismatch" not in st.session_state:
     st.session_state.approved_mismatch = {}
 
+# IMPORTANT
+# Persist uploaded files across reruns
+
+if "uploaded_li_files" not in st.session_state:
+    st.session_state.uploaded_li_files = None
+
+if "uploaded_june_file" not in st.session_state:
+    st.session_state.uploaded_june_file = None
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -40,15 +49,10 @@ def parse_date_val(v):
     if pd.isna(v) or v is None:
         return None
 
-    if hasattr(v, "strftime"):
-        return v.strftime("%Y-%m-%d")
-
-    s = str(v).strip()
-
-    if len(s) >= 10 and s[4] == "-":
-        return s[:10]
-
-    return None
+    try:
+        return pd.to_datetime(v).strftime("%Y-%m-%d")
+    except:
+        return None
 
 
 def parse_li_sheet(df, filter_end_date):
@@ -95,9 +99,9 @@ def parse_li_sheet(df, filter_end_date):
     if not records:
         return [], "No valid rows found"
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
     # FIND LATEST END DATE PER IO
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
 
     latest_dates = {}
 
@@ -116,9 +120,9 @@ def parse_li_sheet(df, filter_end_date):
                 r["end_date"]
             )
 
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
     # KEEP ONLY LATEST DATE ROWS
-    # ─────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────
 
     filtered = []
 
@@ -182,9 +186,6 @@ def build_output(
 
     rows = []
 
-    if not st.session_state.li_data:
-        return pd.DataFrame()
-
     for io, lis in st.session_state.li_data.items():
 
         for li in lis:
@@ -246,10 +247,16 @@ uploaded_li = st.file_uploader(
     accept_multiple_files=True,
 )
 
+if uploaded_li:
+    st.session_state.uploaded_li_files = uploaded_li
+
 june_file = st.file_uploader(
     "Upload June Budget File",
     type=["xlsx"],
 )
+
+if june_file:
+    st.session_state.uploaded_june_file = june_file
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN BUTTON
@@ -262,6 +269,7 @@ if run_clicked:
     st.session_state.processed = False
 
     # RESET ONLY THESE
+
     st.session_state.li_data = {}
     st.session_state.june_budgets = {}
 
@@ -269,9 +277,9 @@ if run_clicked:
     # PROCESS CAMPAIGN FILES
     # ─────────────────────────────────────────────────────────────────
 
-    if uploaded_li:
+    if st.session_state.uploaded_li_files:
 
-        for f in uploaded_li:
+        for f in st.session_state.uploaded_li_files:
 
             try:
 
@@ -300,7 +308,7 @@ if run_clicked:
 
                     st.session_state.li_data[io].append(r)
 
-                    # DO NOT OVERWRITE EXISTING EDITS
+                    # DO NOT OVERWRITE EDITS
 
                     if r["li_id"] not in st.session_state.jun_inputs:
 
@@ -316,11 +324,13 @@ if run_clicked:
     # PROCESS JUNE FILE
     # ─────────────────────────────────────────────────────────────────
 
-    if june_file:
+    if st.session_state.uploaded_june_file:
 
         try:
 
-            dfj = pd.read_excel(june_file)
+            dfj = pd.read_excel(
+                st.session_state.uploaded_june_file
+            )
 
             budgets, err = parse_june_budget_sheet(dfj)
 
@@ -335,7 +345,7 @@ if run_clicked:
     st.session_state.processed = True
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SHOW ONLY IOS NEEDING ATTENTION
+# IOS REQUIRING ATTENTION
 # ─────────────────────────────────────────────────────────────────────────────
 
 if st.session_state.processed:
@@ -376,10 +386,12 @@ if st.session_state.processed:
         )
 
         # SKIP APPROVED
+
         if approved:
             continue
 
         # SKIP MATCHED
+
         if abs(remaining_diff) < 0.01:
             continue
 
