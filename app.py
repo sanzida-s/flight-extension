@@ -56,12 +56,14 @@ code, pre, .stCode { font-family: 'IBM Plex Mono', monospace !important; }
 # ── Session state init ────────────────────────────────────────────────────────
 def init_state():
     defaults = {
-        "li_data": {},          # { io_name -> [{li_id, li_name, prev_budget}] }
+        "li_data": {},          # { io_name -> [{li_id, li_name, prev_budget, end_date}] }
         "loaded_files": [],
         "june_budgets": {},     # { io_name -> total_june_budget }
         "june_ref_file": None,
         "jun_inputs": {},       # { li_id -> float }
         "io_split": {},         # { io_name -> {enabled, cut_day, pct1} }
+        "end_dates_seen": {},   # { li_id -> end_date } to detect inconsistencies
+        "io_end_dates": {},     # { io_name -> set of end_dates seen } for per-IO flagging
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -222,16 +224,23 @@ st.markdown("<div style='color:#55637a;font-family:IBM Plex Mono,monospace;font-
 
 # ── Step 1: Month config ──────────────────────────────────────────────────────
 with st.expander("⚙️ Month Configuration", expanded=True):
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        prev_end = st.date_input("Previous Month End (filter)", value=date(2026, 5, 31), key="prev_end")
-    with c2:
         month_start = st.date_input("New Month Start", value=date(2026, 6, 1), key="month_start")
-    with c3:
+    with c2:
         month_end = st.date_input("New Month End", value=date(2026, 6, 30), key="month_end")
-    with c4:
+    with c3:
         min_budget = st.number_input("Min Flight Budget (€)", value=25.0, min_value=0.0, step=1.0, key="min_budget")
-    st.markdown(f"<div class='info-box'>📅 Filtering LI-Setting for flights ending on or before <b>{prev_end}</b> · New flights: <b>{month_start}</b> → <b>{month_end}</b></div>", unsafe_allow_html=True)
+
+    # Auto-derive filter date = day before new month start
+    prev_end = month_start - timedelta(days=1)
+    st.markdown(
+        f"<div class='info-box'>"
+        f"📅 <b>Filter date auto-set to {prev_end}</b> (day before {month_start}) · "
+        f"New flights: <b>{month_start}</b> → <b>{month_end}</b>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
 
 # ── Step 2: Upload LI sheets ──────────────────────────────────────────────────
 with st.expander("📂 Upload Campaign-Settings Sheets (LI-Setting tab)", expanded=True):
@@ -258,16 +267,36 @@ with st.expander("📂 Upload Campaign-Settings Sheets (LI-Setting tab)", expand
                         continue
 
                     added = 0
+                    inconsistent = []  # LIs whose end date differs from previously seen
+
                     for r in rows:
                         io = r["io"]
+                        li_id = r["li_id"]
+
+                        # Track end dates per IO for inconsistency detection
+                        if io not in st.session_state.io_end_dates:
+                            st.session_state.io_end_dates[io] = set()
+                        st.session_state.io_end_dates[io].add(r["end_date"])
+
+                        # Detect if this LI was seen before with a different end date
+                        if li_id in st.session_state.end_dates_seen:
+                            if st.session_state.end_dates_seen[li_id] != r["end_date"]:
+                                inconsistent.append({
+                                    "li_id": li_id,
+                                    "li_name": r["li_name"],
+                                    "io": io,
+                                    "prev_seen": st.session_state.end_dates_seen[li_id],
+                                    "new": r["end_date"],
+                                })
+                        st.session_state.end_dates_seen[li_id] = r["end_date"]
+
                         if io not in st.session_state.li_data:
                             st.session_state.li_data[io] = []
-                        if not any(x["li_id"] == r["li_id"] for x in st.session_state.li_data[io]):
+                        if not any(x["li_id"] == li_id for x in st.session_state.li_data[io]):
                             st.session_state.li_data[io].append(r)
                             added += 1
-                            # pre-fill june = prev
-                            if r["li_id"] not in st.session_state.jun_inputs:
-                                st.session_state.jun_inputs[r["li_id"]] = r["prev_budget"]
+                            if li_id not in st.session_state.jun_inputs:
+                                st.session_state.jun_inputs[li_id] = r["prev_budget"]
 
                     # sort LIs per IO
                     for io in st.session_state.li_data:
@@ -275,6 +304,25 @@ with st.expander("📂 Upload Campaign-Settings Sheets (LI-Setting tab)", expand
 
                     st.session_state.loaded_files.append(f.name)
                     st.success(f"✅ {f.name}: {added} LIs added across {len(set(r['io'] for r in rows))} IOs")
+
+                    # Warn about inconsistent end dates within this file's IOs
+                    # Group by IO: IOs that have LIs with mixed end dates
+                    mixed_ios = {
+                        io: dates
+                        for io, dates in st.session_state.io_end_dates.items()
+                        if len(dates) > 1
+                    }
+                    if mixed_ios:
+                        msg = "⚠️ **Some IOs have LIs with different last flight end dates** — check these before proceeding:\n"
+                        for io, dates in sorted(mixed_ios.items()):
+                            msg += f"\n- `{io}`: end dates found → {', '.join(sorted(dates))}"
+                        st.warning(msg)
+
+                    if inconsistent:
+                        msg = "⚠️ **LIs seen with conflicting end dates across files:**\n"
+                        for x in inconsistent:
+                            msg += f"\n- `{x['li_name']}` ({x['li_id']}) — was `{x['prev_seen']}`, now `{x['new']}`"
+                        st.warning(msg)
                 except Exception as ex:
                     st.error(f"❌ {f.name}: {ex}")
 
@@ -285,7 +333,7 @@ with st.expander("📂 Upload Campaign-Settings Sheets (LI-Setting tab)", expand
         st.markdown(f"**{total_ios} IOs · {total_lis} LIs** loaded")
 
     if st.button("🗑️ Clear all loaded data", type="secondary"):
-        for k in ["li_data","loaded_files","june_budgets","june_ref_file","jun_inputs","io_split"]:
+        for k in ["li_data","loaded_files","june_budgets","june_ref_file","jun_inputs","io_split","end_dates_seen","io_end_dates"]:
             st.session_state[k] = {} if k != "loaded_files" else []
         st.rerun()
 
@@ -345,6 +393,21 @@ if st.session_state.li_data:
         sp  = get_split(sel_io)
         jun_ref = st.session_state.june_budgets.get(sel_io)
 
+        # Show end date info for this IO
+        io_dates = st.session_state.io_end_dates.get(sel_io, set())
+        if len(io_dates) > 1:
+            st.warning(
+                f"⚠️ **Mixed last flight end dates in this IO:** {', '.join(sorted(io_dates))} — "
+                f"LIs may have run in different prior months. Check budgets carefully."
+            )
+        elif len(io_dates) == 1:
+            ed = list(io_dates)[0]
+            if ed != str(prev_end):
+                st.info(
+                    f"ℹ️ Last flight end date for this IO is **{ed}** "
+                    f"(filter was {prev_end} — LIs were not live last month, picked from earlier flight)"
+                )
+
         # IO config
         with st.container():
             st.markdown(f"<div class='section-header'>IO Split Settings — {sel_io}</div>", unsafe_allow_html=True)
@@ -397,9 +460,16 @@ if st.session_state.li_data:
 
             c1, c2, c3, c4 = st.columns([4, 1.2, 1.4, 2])
             with c1:
-                st.markdown(f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px'>{li['li_name']}</span><br>"
-                            f"<span style='font-family:IBM Plex Mono,monospace;font-size:10px;color:#55637a'>{li_id}</span>",
-                            unsafe_allow_html=True)
+                ed_flag = ""
+                li_ed = li.get("end_date", "")
+                if li_ed and li_ed != str(prev_end):
+                    ed_flag = f" <span style='color:#ffc94d;font-size:9px'>last: {li_ed}</span>"
+                st.markdown(
+                    f"<span style='font-family:IBM Plex Mono,monospace;font-size:11px'>{li['li_name']}</span><br>"
+                    f"<span style='font-family:IBM Plex Mono,monospace;font-size:10px;color:#55637a'>{li_id}</span>"
+                    f"{ed_flag}",
+                    unsafe_allow_html=True
+                )
             with c2:
                 st.markdown(f"<span style='font-family:IBM Plex Mono,monospace;color:#ffc94d'>€{prev_b:,.2f}</span>",
                             unsafe_allow_html=True)
