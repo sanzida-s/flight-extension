@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 from datetime import date, timedelta
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -17,6 +16,9 @@ st.set_page_config(
 # SESSION STATE
 # ─────────────────────────────────────────────────────────────────────────────
 
+if "processed" not in st.session_state:
+    st.session_state.processed = False
+
 if "li_data" not in st.session_state:
     st.session_state.li_data = {}
 
@@ -25,6 +27,9 @@ if "june_budgets" not in st.session_state:
 
 if "jun_inputs" not in st.session_state:
     st.session_state.jun_inputs = {}
+
+if "approved_mismatch" not in st.session_state:
+    st.session_state.approved_mismatch = {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -170,48 +175,6 @@ def parse_june_budget_sheet(df):
     return out, None
 
 
-def apply_proportional(io_name, june_total):
-
-    lis = st.session_state.li_data[io_name]
-
-    may_total = sum(
-        x["prev_budget"]
-        for x in lis
-    )
-
-    if may_total == 0:
-        return
-
-    remaining = june_total
-
-    for i, li in enumerate(lis):
-
-        if i == len(lis) - 1:
-
-            st.session_state.jun_inputs[
-                li["li_id"]
-            ] = round(
-                remaining,
-                2,
-            )
-
-        else:
-
-            share = round(
-                (
-                    li["prev_budget"]
-                    / may_total
-                ) * june_total,
-                2,
-            )
-
-            st.session_state.jun_inputs[
-                li["li_id"]
-            ] = share
-
-            remaining -= share
-
-
 def build_output(
     month_start,
     month_end,
@@ -250,8 +213,6 @@ st.title("🚀 Flight Extension Tool")
 # MONTH CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-st.header("1. Month Configuration")
-
 c1, c2 = st.columns(2)
 
 with c1:
@@ -270,15 +231,11 @@ with c2:
 
 prev_end = month_start - timedelta(days=1)
 
-st.info(
-    f"Using latest available end date <= {prev_end}"
-)
-
 # ─────────────────────────────────────────────────────────────────────────────
-# UPLOAD CAMPAIGN FILES
+# FILE UPLOADS
 # ─────────────────────────────────────────────────────────────────────────────
 
-st.header("2. Upload Campaign Settings Files")
+st.header("1. Upload Files")
 
 uploaded_li = st.file_uploader(
     "Upload Campaign Settings Files",
@@ -286,119 +243,110 @@ uploaded_li = st.file_uploader(
     accept_multiple_files=True,
 )
 
-if uploaded_li:
-
-    st.session_state.li_data = {}
-
-    for f in uploaded_li:
-
-        try:
-
-            xl = pd.ExcelFile(f)
-
-            if "LI-Setting" not in xl.sheet_names:
-
-                st.error(
-                    f"{f.name}: Missing LI-Setting tab"
-                )
-
-                continue
-
-            df = xl.parse("LI-Setting")
-
-            rows, err = parse_li_sheet(
-                df,
-                str(prev_end),
-            )
-
-            if err:
-
-                st.error(err)
-
-                continue
-
-            for r in rows:
-
-                io = r["io"]
-
-                if io not in st.session_state.li_data:
-
-                    st.session_state.li_data[io] = []
-
-                st.session_state.li_data[io].append(r)
-
-                if r["li_id"] not in st.session_state.jun_inputs:
-
-                    st.session_state.jun_inputs[
-                        r["li_id"]
-                    ] = r["prev_budget"]
-
-            st.success(f"{f.name} loaded")
-
-        except Exception as ex:
-
-            st.error(ex)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# JUNE BUDGET FILE
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.header("3. Upload June Budget File")
-
 june_file = st.file_uploader(
     "Upload June Budget File",
     type=["xlsx"],
 )
 
-if june_file:
-
-    try:
-
-        dfj = pd.read_excel(june_file)
-
-        budgets, err = parse_june_budget_sheet(dfj)
-
-        if err:
-
-            st.error(err)
-
-        else:
-
-            st.session_state.june_budgets = budgets
-
-            st.success(
-                "June budget file loaded"
-            )
-
-    except Exception as ex:
-
-        st.error(ex)
-
 # ─────────────────────────────────────────────────────────────────────────────
-# COMPARISON SUMMARY
+# RUN BUTTON
 # ─────────────────────────────────────────────────────────────────────────────
 
-if (
-    st.session_state.li_data
-    and st.session_state.june_budgets
-):
+if st.button("🚀 Run Validation"):
 
-    st.header("4. IO Budget Comparison")
+    st.session_state.processed = False
+    st.session_state.li_data = {}
+    st.session_state.june_budgets = {}
 
-    correct_ios = []
-    mismatch_ios = []
+    # ─────────────────────────────────────────────────────────────────────
+    # PROCESS CAMPAIGN FILES
+    # ─────────────────────────────────────────────────────────────────────
+
+    if uploaded_li:
+
+        for f in uploaded_li:
+
+            try:
+
+                xl = pd.ExcelFile(f)
+
+                if "LI-Setting" not in xl.sheet_names:
+                    continue
+
+                df = xl.parse("LI-Setting")
+
+                rows, err = parse_li_sheet(
+                    df,
+                    str(prev_end),
+                )
+
+                if err:
+                    continue
+
+                for r in rows:
+
+                    io = r["io"]
+
+                    if io not in st.session_state.li_data:
+
+                        st.session_state.li_data[io] = []
+
+                    st.session_state.li_data[io].append(r)
+
+                    if r["li_id"] not in st.session_state.jun_inputs:
+
+                        st.session_state.jun_inputs[
+                            r["li_id"]
+                        ] = r["prev_budget"]
+
+            except:
+                pass
+
+    # ─────────────────────────────────────────────────────────────────────
+    # PROCESS JUNE FILE
+    # ─────────────────────────────────────────────────────────────────────
+
+    if june_file:
+
+        try:
+
+            dfj = pd.read_excel(june_file)
+
+            budgets, err = parse_june_budget_sheet(dfj)
+
+            if not err:
+
+                st.session_state.june_budgets = budgets
+
+        except:
+            pass
+
+    st.session_state.processed = True
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHOW ONLY IOS NEEDING ATTENTION
+# ─────────────────────────────────────────────────────────────────────────────
+
+if st.session_state.processed:
+
+    st.header("2. IOs Requiring Attention")
+
+    mismatch_found = False
 
     for io, lis in st.session_state.li_data.items():
 
-        may_total = round(
+        current_total = round(
             sum(
-                x["prev_budget"]
-                for x in lis
+                st.session_state.jun_inputs.get(
+                    li["li_id"],
+                    li["prev_budget"],
+                )
+                for li in lis
             ),
             2,
         )
 
-        june_total = round(
+        expected_total = round(
             st.session_state.june_budgets.get(
                 io,
                 0,
@@ -406,184 +354,130 @@ if (
             2,
         )
 
-        diff = round(
-            june_total - may_total,
+        difference = round(
+            expected_total - current_total,
             2,
         )
 
-        # MATCHING IO
-
-        if abs(diff) < 0.01:
-
-            correct_ios.append({
-                "IO Name": io,
-                "Previous Total": may_total,
-                "June Budget": june_total,
-            })
-
-            # keep same budgets
-
-            for li in lis:
-
-                st.session_state.jun_inputs[
-                    li["li_id"]
-                ] = li["prev_budget"]
-
-        # MISMATCH IO
-
-        else:
-
-            mismatch_ios.append({
-                "IO Name": io,
-                "Previous Total": may_total,
-                "June Budget": june_total,
-                "Difference": diff,
-            })
-
-            # proportional split
-
-            apply_proportional(
-                io,
-                june_total,
-            )
-
-    # ─────────────────────────────────────────────────────────────────────
-    # SUMMARY
-    # ─────────────────────────────────────────────────────────────────────
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.success(
-            f"✅ Matching IOs: {len(correct_ios)}"
+        approved = st.session_state.approved_mismatch.get(
+            io,
+            False,
         )
 
-    with c2:
-        st.warning(
-            f"⚠️ IOs Needing Changes: {len(mismatch_ios)}"
-        )
+        if abs(difference) < 0.01 or approved:
+            continue
 
-    # ─────────────────────────────────────────────────────────────────────
-    # MATCHING IOS
-    # ─────────────────────────────────────────────────────────────────────
-
-    if correct_ios:
-
-        st.subheader("✅ Matching IOs")
-
-        st.dataframe(
-            pd.DataFrame(correct_ios),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    # ─────────────────────────────────────────────────────────────────────
-    # MISMATCH IOS
-    # ─────────────────────────────────────────────────────────────────────
-
-    if mismatch_ios:
-
-        st.subheader(
-            "⚠️ IOs Requiring Budget Changes"
-        )
-
-        st.dataframe(
-            pd.DataFrame(mismatch_ios),
-            use_container_width=True,
-            hide_index=True,
-        )
+        mismatch_found = True
 
         st.markdown("---")
 
-        for x in mismatch_ios:
+        st.subheader(io)
 
-            io = x["IO Name"]
+        st.write(
+            f"Current Total: €{current_total:,.2f}"
+        )
 
-            st.markdown(f"## {io}")
+        st.write(
+            f"Expected June Total: €{expected_total:,.2f}"
+        )
 
-            lis = st.session_state.li_data[io]
+        st.warning(
+            f"Difference: €{difference:+,.2f}"
+        )
 
-            edit_rows = []
+        approve = st.checkbox(
+            "This mismatch is intentional",
+            key=f"approve_{io}",
+        )
 
-            for li in lis:
+        st.session_state.approved_mismatch[
+            io
+        ] = approve
 
-                li_id = li["li_id"]
+        rows = []
 
-                prev_budget = li["prev_budget"]
+        for li in lis:
 
-                current_budget = (
-                    st.session_state.jun_inputs.get(
-                        li_id,
-                        prev_budget,
-                    )
-                )
+            li_id = li["li_id"]
 
-                c1, c2, c3, c4 = st.columns(
-                    [4, 2, 2, 2]
-                )
+            prev_budget = li["prev_budget"]
 
-                with c1:
-
-                    st.write(li["li_name"])
-
-                with c2:
-
-                    st.write(
-                        f"€{prev_budget:,.2f}"
-                    )
-
-                with c3:
-
-                    new_budget = st.number_input(
-                        f"{io}_{li_id}",
-                        value=float(current_budget),
-                        min_value=0.0,
-                        step=1.0,
-                    )
-
-                    st.session_state.jun_inputs[
-                        li_id
-                    ] = new_budget
-
-                with c4:
-
-                    change = round(
-                        new_budget - prev_budget,
-                        2,
-                    )
-
-                    if abs(change) < 0.01:
-
-                        st.success("MATCH")
-
-                    else:
-
-                        st.warning(
-                            f"{change:+,.2f}"
-                        )
-
-                edit_rows.append({
-                    "LI ID": li_id,
-                    "LI Name": li["li_name"],
-                    "Previous Budget": prev_budget,
-                    "New Budget": new_budget,
-                })
-
-            st.dataframe(
-                pd.DataFrame(edit_rows),
-                use_container_width=True,
-                hide_index=True,
+            current_budget = st.session_state.jun_inputs.get(
+                li_id,
+                prev_budget,
             )
 
-            st.markdown("---")
+            c1, c2, c3 = st.columns([5, 2, 2])
+
+            with c1:
+
+                st.write(li["li_name"])
+
+            with c2:
+
+                st.write(
+                    f"€{prev_budget:,.2f}"
+                )
+
+            with c3:
+
+                new_budget = st.number_input(
+                    f"{io}_{li_id}",
+                    value=float(current_budget),
+                    min_value=0.0,
+                    step=1.0,
+                )
+
+                st.session_state.jun_inputs[
+                    li_id
+                ] = new_budget
+
+            rows.append({
+                "LI ID": li_id,
+                "LI Name": li["li_name"],
+                "Previous Budget": prev_budget,
+                "New Budget": new_budget,
+            })
+
+        new_total = round(
+            sum(
+                st.session_state.jun_inputs.get(
+                    li["li_id"],
+                    0,
+                )
+                for li in lis
+            ),
+            2,
+        )
+
+        remaining_diff = round(
+            expected_total - new_total,
+            2,
+        )
+
+        if abs(remaining_diff) < 0.01:
+
+            st.success("✅ Now Matching")
+
+        else:
+
+            st.warning(
+                f"⚠ Remaining Difference: €{remaining_diff:+,.2f}"
+            )
+
+    if not mismatch_found:
+
+        st.success(
+            "✅ All IOs are matching correctly"
+        )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OUTPUT
+# FINAL OUTPUT
 # ─────────────────────────────────────────────────────────────────────────────
 
-if st.session_state.li_data:
+if st.session_state.processed:
 
-    st.header("5. Final Output")
+    st.header("3. Final Output")
 
     df_out = build_output(
         month_start,
