@@ -484,25 +484,41 @@ if st.session_state.processed:
         month_end,
     )
 
-    st.dataframe(
-        df_out,
-        use_container_width=True,
-        hide_index=True,
-    )
+    if not df_out.empty:
 
-    csv = df_out[
-        [
+        st.dataframe(
+            df_out,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        export_cols = [
             "LI ID",
             "Start Date",
             "End Date",
             "Budget",
             "Daily Budget",
         ]
-    ].to_csv(index=False)
 
-    st.download_button(
-        "⬇️ Download CSV",
-        csv,
-        file_name="flight_extension.csv",
-        mime="text/csv",
-    )
+        # only keep columns that exist
+        export_cols = [
+            c for c in export_cols
+            if c in df_out.columns
+        ]
+
+        csv = df_out[
+            export_cols
+        ].to_csv(index=False)
+
+        st.download_button(
+            "⬇️ Download CSV",
+            csv,
+            file_name="flight_extension.csv",
+            mime="text/csv",
+        )
+
+    else:
+
+        st.warning(
+            "No output rows generated."
+        )
