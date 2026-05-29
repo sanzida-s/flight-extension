@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
 st.set_page_config(
     page_title="Flight Extension Tool",
@@ -12,45 +12,31 @@ st.set_page_config(
     layout="wide",
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 # SESSION STATE
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
-if "processed" not in st.session_state:
-    st.session_state.processed = False
+defaults = {
+    "li_data": {},
+    "june_budgets": {},
+    "jun_inputs": {},
+    "approved_mismatch": {},
+    "processed": False,
+}
 
-if "li_data" not in st.session_state:
-    st.session_state.li_data = {}
+for k, v in defaults.items():
 
-if "june_budgets" not in st.session_state:
-    st.session_state.june_budgets = {}
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-if "jun_inputs" not in st.session_state:
-    st.session_state.jun_inputs = {}
-
-if "approved_mismatch" not in st.session_state:
-    st.session_state.approved_mismatch = {}
-
-# IMPORTANT
-# Persist uploaded files across reruns
-
-if "uploaded_li_files" not in st.session_state:
-    st.session_state.uploaded_li_files = None
-
-if "uploaded_june_file" not in st.session_state:
-    st.session_state.uploaded_june_file = None
-
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 # HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
-def parse_date_val(v):
-
-    if pd.isna(v) or v is None:
-        return None
+def parse_date(v):
 
     try:
-        return pd.to_datetime(v).strftime("%Y-%m-%d")
+        return pd.to_datetime(v)
     except:
         return None
 
@@ -68,88 +54,80 @@ def parse_li_sheet(df, filter_end_date):
     for c in required:
 
         if c not in df.columns:
-            return [], f"Missing column: {c}"
+            return []
 
-    records = []
+    rows = []
 
-    for _, row in df.iterrows():
+    for _, r in df.iterrows():
 
-        ed = parse_date_val(
-            row["Active Flight End Date"]
+        end_date = parse_date(
+            r["Active Flight End Date"]
         )
 
-        if not ed:
+        if end_date is None:
             continue
 
-        if ed > filter_end_date:
+        if end_date > filter_end_date:
             continue
 
-        records.append({
-            "io": str(row["IO Name"]).strip(),
-            "li_id": str(row["LI ID"]).strip(),
-            "li_name": str(row["LI Name"]).strip(),
-            "end_date": ed,
+        rows.append({
+            "io": str(r["IO Name"]).strip(),
+            "li_id": str(r["LI ID"]).strip(),
+            "li_name": str(r["LI Name"]).strip(),
+            "end_date": end_date,
             "prev_budget": float(
-                row["Active Flight Budget"]
+                r["Active Flight Budget"]
             ) if not pd.isna(
-                row["Active Flight Budget"]
-            ) else 0.0,
+                r["Active Flight Budget"]
+            ) else 0,
         })
 
-    if not records:
-        return [], "No valid rows found"
+    if not rows:
+        return []
 
-    # ─────────────────────────────────────────────────────────────────
-    # FIND LATEST END DATE PER IO
-    # ─────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # KEEP ONLY LATEST DATE PER IO
+    # ─────────────────────────────────────────────────────────
 
-    latest_dates = {}
+    latest_per_io = {}
 
-    for r in records:
+    for r in rows:
 
         io = r["io"]
 
-        if io not in latest_dates:
+        if io not in latest_per_io:
 
-            latest_dates[io] = r["end_date"]
+            latest_per_io[io] = r["end_date"]
 
         else:
 
-            latest_dates[io] = max(
-                latest_dates[io],
+            latest_per_io[io] = max(
+                latest_per_io[io],
                 r["end_date"]
             )
 
-    # ─────────────────────────────────────────────────────────────────
-    # KEEP ONLY LATEST DATE ROWS
-    # ─────────────────────────────────────────────────────────────────
+    final_rows = []
 
-    filtered = []
+    for r in rows:
 
-    for r in records:
+        if r["end_date"] == latest_per_io[r["io"]]:
 
-        if r["end_date"] == latest_dates[r["io"]]:
+            final_rows.append(r)
 
-            filtered.append(r)
-
-    filtered.sort(
-        key=lambda x: (x["io"], x["li_name"])
-    )
-
-    return filtered, None
+    return final_rows
 
 
-def parse_june_budget_sheet(df):
+def parse_june_budget(df):
 
     io_col = next(
         (
             c for c in df.columns
-            if "io name" in c.lower()
+            if "io" in c.lower()
         ),
         None,
     )
 
-    bud_col = next(
+    budget_col = next(
         (
             c for c in df.columns
             if "budget" in c.lower()
@@ -157,32 +135,26 @@ def parse_june_budget_sheet(df):
         None,
     )
 
-    if not io_col or not bud_col:
-        return {}, "Missing IO/Budget columns"
-
     out = {}
 
-    for _, row in df.iterrows():
+    if not io_col or not budget_col:
+        return out
 
-        io = str(row[io_col]).strip()
+    for _, r in df.iterrows():
+
+        io = str(r[io_col]).strip()
 
         try:
 
-            val = float(row[bud_col])
-
-            if io:
-                out[io] = val
+            out[io] = float(r[budget_col])
 
         except:
             pass
 
-    return out, None
+    return out
 
 
-def build_output(
-    month_start,
-    month_end,
-):
+def build_output(start_date, end_date):
 
     rows = []
 
@@ -190,32 +162,30 @@ def build_output(
 
         for li in lis:
 
-            li_id = li["li_id"]
-
             budget = st.session_state.jun_inputs.get(
-                li_id,
+                li["li_id"],
                 li["prev_budget"],
             )
 
             rows.append({
-                "LI ID": li_id,
-                "Start Date": month_start.strftime("%Y-%m-%d"),
-                "End Date": month_end.strftime("%Y-%m-%d"),
+                "LI ID": li["li_id"],
+                "Start Date": start_date.strftime("%Y-%m-%d"),
+                "End Date": end_date.strftime("%Y-%m-%d"),
                 "Budget": round(float(budget), 2),
                 "Daily Budget": 0,
             })
 
     return pd.DataFrame(rows)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 # TITLE
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
 st.title("🚀 Flight Extension Tool")
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 # MONTH CONFIG
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
 c1, c2 = st.columns(2)
 
@@ -233,120 +203,98 @@ with c2:
         value=date(2026, 6, 30)
     )
 
-prev_end = month_start - timedelta(days=1)
+prev_month_end = pd.Timestamp(
+    month_start - timedelta(days=1)
+)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 # FILE UPLOADS
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
 st.header("1. Upload Files")
 
-uploaded_li = st.file_uploader(
+campaign_files = st.file_uploader(
     "Upload Campaign Settings Files",
     type=["xlsx"],
     accept_multiple_files=True,
 )
 
-if uploaded_li:
-    st.session_state.uploaded_li_files = uploaded_li
-
-june_file = st.file_uploader(
+budget_file = st.file_uploader(
     "Upload June Budget File",
     type=["xlsx"],
 )
 
-if june_file:
-    st.session_state.uploaded_june_file = june_file
+# ─────────────────────────────────────────────────────────────────────
+# PROCESS FILES IMMEDIATELY
+# ─────────────────────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# RUN BUTTON
-# ─────────────────────────────────────────────────────────────────────────────
+if campaign_files:
 
-run_clicked = st.button("🚀 Run Validation")
+    temp_li_data = {}
 
-if run_clicked:
-
-    st.session_state.processed = False
-
-    # RESET ONLY THESE
-
-    st.session_state.li_data = {}
-    st.session_state.june_budgets = {}
-
-    # ─────────────────────────────────────────────────────────────────
-    # PROCESS CAMPAIGN FILES
-    # ─────────────────────────────────────────────────────────────────
-
-    if st.session_state.uploaded_li_files:
-
-        for f in st.session_state.uploaded_li_files:
-
-            try:
-
-                xl = pd.ExcelFile(f)
-
-                if "LI-Setting" not in xl.sheet_names:
-                    continue
-
-                df = xl.parse("LI-Setting")
-
-                rows, err = parse_li_sheet(
-                    df,
-                    str(prev_end),
-                )
-
-                if err:
-                    continue
-
-                for r in rows:
-
-                    io = r["io"]
-
-                    if io not in st.session_state.li_data:
-
-                        st.session_state.li_data[io] = []
-
-                    st.session_state.li_data[io].append(r)
-
-                    # DO NOT OVERWRITE EDITS
-
-                    if r["li_id"] not in st.session_state.jun_inputs:
-
-                        st.session_state.jun_inputs[
-                            r["li_id"]
-                        ] = r["prev_budget"]
-
-            except Exception as ex:
-
-                st.error(ex)
-
-    # ─────────────────────────────────────────────────────────────────
-    # PROCESS JUNE FILE
-    # ─────────────────────────────────────────────────────────────────
-
-    if st.session_state.uploaded_june_file:
+    for f in campaign_files:
 
         try:
 
-            dfj = pd.read_excel(
-                st.session_state.uploaded_june_file
+            xl = pd.ExcelFile(f)
+
+            if "LI-Setting" not in xl.sheet_names:
+                continue
+
+            df = xl.parse("LI-Setting")
+
+            rows = parse_li_sheet(
+                df,
+                prev_month_end,
             )
 
-            budgets, err = parse_june_budget_sheet(dfj)
+            for r in rows:
 
-            if not err:
+                io = r["io"]
 
-                st.session_state.june_budgets = budgets
+                if io not in temp_li_data:
 
-        except Exception as ex:
+                    temp_li_data[io] = []
 
-            st.error(ex)
+                temp_li_data[io].append(r)
+
+                if r["li_id"] not in st.session_state.jun_inputs:
+
+                    st.session_state.jun_inputs[
+                        r["li_id"]
+                    ] = r["prev_budget"]
+
+        except:
+            pass
+
+    st.session_state.li_data = temp_li_data
+
+if budget_file:
+
+    try:
+
+        df_budget = pd.read_excel(
+            budget_file
+        )
+
+        st.session_state.june_budgets = parse_june_budget(
+            df_budget
+        )
+
+    except:
+        pass
+
+# ─────────────────────────────────────────────────────────────────────
+# RUN VALIDATION BUTTON
+# ─────────────────────────────────────────────────────────────────────
+
+if st.button("🚀 Run Validation"):
 
     st.session_state.processed = True
 
-# ─────────────────────────────────────────────────────────────────────────────
-# IOS REQUIRING ATTENTION
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# VALIDATION
+# ─────────────────────────────────────────────────────────────────────
 
 if st.session_state.processed:
 
@@ -375,7 +323,7 @@ if st.session_state.processed:
             2,
         )
 
-        remaining_diff = round(
+        diff = round(
             expected_total - current_total,
             2,
         )
@@ -385,14 +333,10 @@ if st.session_state.processed:
             False,
         )
 
-        # SKIP APPROVED
-
         if approved:
             continue
 
-        # SKIP MATCHED
-
-        if abs(remaining_diff) < 0.01:
+        if abs(diff) < 0.01:
             continue
 
         mismatch_found = True
@@ -410,7 +354,7 @@ if st.session_state.processed:
         )
 
         st.warning(
-            f"Difference: €{remaining_diff:+,.2f}"
+            f"Difference: €{diff:+,.2f}"
         )
 
         approve = st.checkbox(
@@ -422,47 +366,37 @@ if st.session_state.processed:
             io
         ] = approve
 
-        # ─────────────────────────────────────────────────────────
-        # LI EDITING
-        # ─────────────────────────────────────────────────────────
-
         for li in lis:
 
             li_id = li["li_id"]
 
-            prev_budget = li["prev_budget"]
-
-            current_budget = st.session_state.jun_inputs.get(
-                li_id,
-                prev_budget,
-            )
-
-            c1, c2, c3 = st.columns([5, 2, 2])
+            c1, c2, c3 = st.columns([5,2,2])
 
             with c1:
                 st.write(li["li_name"])
 
             with c2:
                 st.write(
-                    f"€{prev_budget:,.2f}"
+                    f"€{li['prev_budget']:,.2f}"
                 )
 
             with c3:
 
-                new_budget = st.number_input(
+                current_val = st.session_state.jun_inputs.get(
+                    li_id,
+                    li["prev_budget"],
+                )
+
+                new_val = st.number_input(
                     f"{io}_{li_id}",
-                    value=float(current_budget),
+                    value=float(current_val),
                     min_value=0.0,
                     step=1.0,
                 )
 
                 st.session_state.jun_inputs[
                     li_id
-                ] = new_budget
-
-        # ─────────────────────────────────────────────────────────
-        # LIVE VALIDATION
-        # ─────────────────────────────────────────────────────────
+                ] = new_val
 
         updated_total = round(
             sum(
@@ -496,9 +430,9 @@ if st.session_state.processed:
             "✅ All IOs are matching correctly"
         )
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 # FINAL OUTPUT
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 
 st.header("3. Final Output")
 
@@ -527,5 +461,5 @@ if len(df_out) > 0:
 else:
 
     st.info(
-        "Run Validation to generate output rows."
+        "Upload files and run validation."
     )
