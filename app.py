@@ -182,23 +182,26 @@ def build_output(
 
     rows = []
 
+    if not st.session_state.li_data:
+        return pd.DataFrame()
+
     for io, lis in st.session_state.li_data.items():
 
         for li in lis:
 
+            li_id = li["li_id"]
+
             budget = st.session_state.jun_inputs.get(
-                li["li_id"],
+                li_id,
                 li["prev_budget"],
             )
 
             rows.append({
-                "LI ID": li["li_id"],
-                "LI Name": li["li_name"],
+                "LI ID": li_id,
                 "Start Date": month_start.strftime("%Y-%m-%d"),
                 "End Date": month_end.strftime("%Y-%m-%d"),
-                "Budget": round(budget, 2),
+                "Budget": round(float(budget), 2),
                 "Daily Budget": 0,
-                "IO": io,
             })
 
     return pd.DataFrame(rows)
@@ -258,7 +261,7 @@ if run_clicked:
 
     st.session_state.processed = False
 
-    # ONLY RESET THESE
+    # RESET ONLY THESE
     st.session_state.li_data = {}
     st.session_state.june_budgets = {}
 
@@ -297,8 +300,7 @@ if run_clicked:
 
                     st.session_state.li_data[io].append(r)
 
-                    # IMPORTANT:
-                    # DO NOT OVERWRITE EDITED VALUES
+                    # DO NOT OVERWRITE EXISTING EDITS
 
                     if r["li_id"] not in st.session_state.jun_inputs:
 
@@ -306,8 +308,9 @@ if run_clicked:
                             r["li_id"]
                         ] = r["prev_budget"]
 
-            except:
-                pass
+            except Exception as ex:
+
+                st.error(ex)
 
     # ─────────────────────────────────────────────────────────────────
     # PROCESS JUNE FILE
@@ -325,8 +328,9 @@ if run_clicked:
 
                 st.session_state.june_budgets = budgets
 
-        except:
-            pass
+        except Exception as ex:
+
+            st.error(ex)
 
     st.session_state.processed = True
 
@@ -371,11 +375,11 @@ if st.session_state.processed:
             False,
         )
 
-        # ONLY SKIP IF APPROVED
+        # SKIP APPROVED
         if approved:
             continue
 
-        # ONLY SHOW MISMATCHED IOS
+        # SKIP MATCHED
         if abs(remaining_diff) < 0.01:
             continue
 
@@ -484,7 +488,10 @@ if st.session_state.processed:
 # FINAL OUTPUT
 # ─────────────────────────────────────────────────────────────────────────────
 
-if st.session_state.processed:
+if (
+    st.session_state.processed
+    and st.session_state.li_data
+):
 
     st.header("3. Final Output")
 
@@ -493,7 +500,7 @@ if st.session_state.processed:
         month_end,
     )
 
-    if not df_out.empty:
+    if len(df_out) > 0:
 
         st.dataframe(
             df_out,
@@ -501,17 +508,7 @@ if st.session_state.processed:
             hide_index=True,
         )
 
-        export_cols = [
-            "LI ID",
-            "Start Date",
-            "End Date",
-            "Budget",
-            "Daily Budget",
-        ]
-
-        csv = df_out[
-            export_cols
-        ].to_csv(index=False)
+        csv = df_out.to_csv(index=False)
 
         st.download_button(
             "⬇️ Download CSV",
