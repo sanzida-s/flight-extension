@@ -258,11 +258,9 @@ if run_clicked:
 
     st.session_state.processed = False
 
-    # clear old data
+    # ONLY RESET THESE
     st.session_state.li_data = {}
     st.session_state.june_budgets = {}
-    st.session_state.jun_inputs = {}
-    st.session_state.approved_mismatch = {}
 
     # ─────────────────────────────────────────────────────────────────
     # PROCESS CAMPAIGN FILES
@@ -299,9 +297,14 @@ if run_clicked:
 
                     st.session_state.li_data[io].append(r)
 
-                    st.session_state.jun_inputs[
-                        r["li_id"]
-                    ] = r["prev_budget"]
+                    # IMPORTANT:
+                    # DO NOT OVERWRITE EDITED VALUES
+
+                    if r["li_id"] not in st.session_state.jun_inputs:
+
+                        st.session_state.jun_inputs[
+                            r["li_id"]
+                        ] = r["prev_budget"]
 
             except:
                 pass
@@ -339,6 +342,14 @@ if st.session_state.processed:
 
     for io, lis in st.session_state.li_data.items():
 
+        expected_total = round(
+            st.session_state.june_budgets.get(
+                io,
+                0,
+            ),
+            2,
+        )
+
         current_total = round(
             sum(
                 st.session_state.jun_inputs.get(
@@ -350,11 +361,8 @@ if st.session_state.processed:
             2,
         )
 
-        expected_total = round(
-            st.session_state.june_budgets.get(
-                io,
-                0,
-            ),
+        remaining_diff = round(
+            expected_total - current_total,
             2,
         )
 
@@ -363,12 +371,12 @@ if st.session_state.processed:
             False,
         )
 
-        difference = round(
-            expected_total - current_total,
-            2,
-        )
+        # ONLY SKIP IF APPROVED
+        if approved:
+            continue
 
-        if abs(difference) < 0.01 or approved:
+        # ONLY SHOW MISMATCHED IOS
+        if abs(remaining_diff) < 0.01:
             continue
 
         mismatch_found = True
@@ -385,6 +393,10 @@ if st.session_state.processed:
             f"Expected June Total: €{expected_total:,.2f}"
         )
 
+        st.warning(
+            f"Difference: €{remaining_diff:+,.2f}"
+        )
+
         approve = st.checkbox(
             "This mismatch is intentional",
             key=f"approve_{io}",
@@ -393,6 +405,10 @@ if st.session_state.processed:
         st.session_state.approved_mismatch[
             io
         ] = approve
+
+        # ─────────────────────────────────────────────────────────
+        # LI EDITING
+        # ─────────────────────────────────────────────────────────
 
         for li in lis:
 
@@ -428,7 +444,9 @@ if st.session_state.processed:
                     li_id
                 ] = new_budget
 
+        # ─────────────────────────────────────────────────────────
         # LIVE VALIDATION
+        # ─────────────────────────────────────────────────────────
 
         updated_total = round(
             sum(
@@ -441,19 +459,19 @@ if st.session_state.processed:
             2,
         )
 
-        remaining_diff = round(
+        updated_diff = round(
             expected_total - updated_total,
             2,
         )
 
-        if abs(remaining_diff) < 0.01:
+        if abs(updated_diff) < 0.01:
 
             st.success("✅ Now Matching")
 
         else:
 
             st.warning(
-                f"⚠ Remaining Difference: €{remaining_diff:+,.2f}"
+                f"⚠ Remaining Difference: €{updated_diff:+,.2f}"
             )
 
     if not mismatch_found:
@@ -489,11 +507,6 @@ if st.session_state.processed:
             "End Date",
             "Budget",
             "Daily Budget",
-        ]
-
-        export_cols = [
-            c for c in export_cols
-            if c in df_out.columns
         ]
 
         csv = df_out[
