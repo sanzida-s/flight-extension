@@ -158,9 +158,15 @@ def build_output(start_date, end_date):
 
     rows = []
 
-    for io, lis in st.session_state.li_data.items():
+    for io, lis in sorted(
+        st.session_state.li_data.items(),
+        key=lambda x: x[0].lower()
+    ):
 
-        for li in lis:
+        for li in sorted(
+            lis,
+            key=lambda x: x["li_name"].lower()
+        ):
 
             budget = st.session_state.jun_inputs.get(
                 li["li_id"],
@@ -264,8 +270,9 @@ if campaign_files:
                         r["li_id"]
                     ] = r["prev_budget"]
 
-        except:
-            pass
+        except Exception as ex:
+
+            st.error(f"Error processing file: {ex}")
 
     st.session_state.li_data = temp_li_data
 
@@ -281,8 +288,9 @@ if budget_file:
             df_budget
         )
 
-    except:
-        pass
+    except Exception as ex:
+
+        st.error(f"Error processing budget file: {ex}")
 
 # ─────────────────────────────────────────────────────────────────────
 # RUN VALIDATION BUTTON
@@ -302,7 +310,10 @@ if st.session_state.processed:
 
     mismatch_found = False
 
-    for io, lis in st.session_state.li_data.items():
+    for io, lis in sorted(
+        st.session_state.li_data.items(),
+        key=lambda x: x[0].lower()
+    ):
 
         expected_total = round(
             st.session_state.june_budgets.get(
@@ -366,11 +377,14 @@ if st.session_state.processed:
             io
         ] = approve
 
-        for li in lis:
+        for li in sorted(
+            lis,
+            key=lambda x: x["li_name"].lower()
+        ):
 
             li_id = li["li_id"]
 
-            c1, c2, c3 = st.columns([5,2,2])
+            c1, c2, c3 = st.columns([5, 2, 2])
 
             with c1:
                 st.write(li["li_name"])
