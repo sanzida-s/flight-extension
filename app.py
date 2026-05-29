@@ -2,36 +2,28 @@ import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
 
-# ─────────────────────────────────────────────────────────────────────
-# PAGE CONFIG
-# ─────────────────────────────────────────────────────────────────────
-
 st.set_page_config(
     page_title="Flight Extension Tool",
-    page_icon="🚀",
-    layout="wide",
+    layout="wide"
 )
 
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # SESSION STATE
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
-defaults = {
+for k, v in {
     "li_data": {},
     "june_budgets": {},
     "jun_inputs": {},
-    "approved_mismatch": {},
-    "processed": False,
-}
-
-for k, v in defaults.items():
+    "approved": {}
+}.items():
 
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 # HELPERS
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
 def parse_date(v):
 
@@ -41,7 +33,7 @@ def parse_date(v):
         return None
 
 
-def parse_li_sheet(df, filter_end_date):
+def parse_li_sheet(df, cutoff_date):
 
     required = [
         "IO Name",
@@ -67,7 +59,7 @@ def parse_li_sheet(df, filter_end_date):
         if end_date is None:
             continue
 
-        if end_date > filter_end_date:
+        if end_date > cutoff_date:
             continue
 
         rows.append({
@@ -75,32 +67,29 @@ def parse_li_sheet(df, filter_end_date):
             "li_id": str(r["LI ID"]).strip(),
             "li_name": str(r["LI Name"]).strip(),
             "end_date": end_date,
-            "prev_budget": float(
+            "budget": float(
                 r["Active Flight Budget"]
             ) if not pd.isna(
                 r["Active Flight Budget"]
-            ) else 0,
+            ) else 0
         })
 
     if not rows:
         return []
 
-    # KEEP ONLY LATEST DATE PER IO
+    # latest date per IO
 
-    latest_per_io = {}
+    latest = {}
 
     for r in rows:
 
         io = r["io"]
 
-        if io not in latest_per_io:
-
-            latest_per_io[io] = r["end_date"]
-
+        if io not in latest:
+            latest[io] = r["end_date"]
         else:
-
-            latest_per_io[io] = max(
-                latest_per_io[io],
+            latest[io] = max(
+                latest[io],
                 r["end_date"]
             )
 
@@ -108,21 +97,20 @@ def parse_li_sheet(df, filter_end_date):
 
     for r in rows:
 
-        if r["end_date"] == latest_per_io[r["io"]]:
-
+        if r["end_date"] == latest[r["io"]]:
             final_rows.append(r)
 
     return final_rows
 
 
-def parse_june_budget(df):
+def parse_budget_sheet(df):
 
     io_col = next(
         (
             c for c in df.columns
             if "io" in c.lower()
         ),
-        None,
+        None
     )
 
     budget_col = next(
@@ -130,7 +118,7 @@ def parse_june_budget(df):
             c for c in df.columns
             if "budget" in c.lower()
         ),
-        None,
+        None
     )
 
     out = {}
@@ -140,11 +128,13 @@ def parse_june_budget(df):
 
     for _, r in df.iterrows():
 
-        io = str(r[io_col]).strip()
-
         try:
 
-            out[io] = float(r[budget_col])
+            io = str(r[io_col]).strip()
+
+            out[io] = float(
+                r[budget_col]
+            )
 
         except:
             pass
@@ -168,7 +158,7 @@ def build_output(start_date, end_date):
 
             budget = st.session_state.jun_inputs.get(
                 li["li_id"],
-                li["prev_budget"],
+                li["budget"]
             )
 
             rows.append({
@@ -181,15 +171,11 @@ def build_output(start_date, end_date):
 
     return pd.DataFrame(rows)
 
-# ─────────────────────────────────────────────────────────────────────
-# TITLE
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# UI
+# ─────────────────────────────────────────────
 
 st.title("🚀 Flight Extension Tool")
-
-# ─────────────────────────────────────────────────────────────────────
-# MONTH CONFIG
-# ─────────────────────────────────────────────────────────────────────
 
 c1, c2 = st.columns(2)
 
@@ -207,102 +193,99 @@ with c2:
         value=date(2026, 6, 30)
     )
 
-prev_month_end = pd.Timestamp(
+cutoff_date = pd.Timestamp(
     month_start - timedelta(days=1)
 )
 
-# ─────────────────────────────────────────────────────────────────────
-# FILE UPLOADS
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# FILES
+# ─────────────────────────────────────────────
 
 st.header("1. Upload Files")
 
 campaign_files = st.file_uploader(
-    "Upload Campaign Settings Files",
+    "Campaign Setting Files",
     type=["xlsx"],
-    accept_multiple_files=True,
+    accept_multiple_files=True
 )
 
 budget_file = st.file_uploader(
-    "Upload June Budget File",
-    type=["xlsx"],
+    "June Budget File",
+    type=["xlsx"]
 )
 
-# ─────────────────────────────────────────────────────────────────────
-# PROCESS FILES
-# ─────────────────────────────────────────────────────────────────────
-
-if campaign_files:
-
-    temp_li_data = {}
-
-    for f in campaign_files:
-
-        try:
-
-            xl = pd.ExcelFile(f)
-
-            if "LI-Setting" not in xl.sheet_names:
-                continue
-
-            df = xl.parse("LI-Setting")
-
-            rows = parse_li_sheet(
-                df,
-                prev_month_end,
-            )
-
-            for r in rows:
-
-                io = r["io"]
-
-                if io not in temp_li_data:
-
-                    temp_li_data[io] = []
-
-                temp_li_data[io].append(r)
-
-                if r["li_id"] not in st.session_state.jun_inputs:
-
-                    st.session_state.jun_inputs[
-                        r["li_id"]
-                    ] = r["prev_budget"]
-
-        except Exception as ex:
-
-            st.error(f"Error processing file: {ex}")
-
-    st.session_state.li_data = temp_li_data
-
-if budget_file:
-
-    try:
-
-        df_budget = pd.read_excel(
-            budget_file
-        )
-
-        st.session_state.june_budgets = parse_june_budget(
-            df_budget
-        )
-
-    except Exception as ex:
-
-        st.error(f"Error processing budget file: {ex}")
-
-# ─────────────────────────────────────────────────────────────────────
-# RUN BUTTON
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# RUN VALIDATION
+# ─────────────────────────────────────────────
 
 if st.button("🚀 Run Validation"):
 
-    st.session_state.processed = True
+    li_data = {}
 
-# ─────────────────────────────────────────────────────────────────────
+    # campaign files
+
+    if campaign_files:
+
+        for f in campaign_files:
+
+            try:
+
+                xl = pd.ExcelFile(f)
+
+                if "LI-Setting" not in xl.sheet_names:
+                    continue
+
+                df = xl.parse("LI-Setting")
+
+                rows = parse_li_sheet(
+                    df,
+                    cutoff_date
+                )
+
+                for r in rows:
+
+                    io = r["io"]
+
+                    if io not in li_data:
+                        li_data[io] = []
+
+                    li_data[io].append(r)
+
+                    if r["li_id"] not in st.session_state.jun_inputs:
+
+                        st.session_state.jun_inputs[
+                            r["li_id"]
+                        ] = r["budget"]
+
+            except Exception as ex:
+
+                st.error(ex)
+
+    st.session_state.li_data = li_data
+
+    # budget file
+
+    if budget_file:
+
+        try:
+
+            dfb = pd.read_excel(
+                budget_file
+            )
+
+            st.session_state.june_budgets = parse_budget_sheet(
+                dfb
+            )
+
+        except Exception as ex:
+
+            st.error(ex)
+
+# ─────────────────────────────────────────────
 # VALIDATION
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
 
-if st.session_state.processed:
+if st.session_state.li_data:
 
     st.header("2. IOs Requiring Attention")
 
@@ -316,30 +299,30 @@ if st.session_state.processed:
         expected_total = round(
             st.session_state.june_budgets.get(
                 io,
-                0,
+                0
             ),
-            2,
+            2
         )
 
         current_total = round(
             sum(
                 st.session_state.jun_inputs.get(
                     li["li_id"],
-                    li["prev_budget"],
+                    li["budget"]
                 )
                 for li in lis
             ),
-            2,
+            2
         )
 
         diff = round(
             expected_total - current_total,
-            2,
+            2
         )
 
-        approved = st.session_state.approved_mismatch.get(
+        approved = st.session_state.approved.get(
             io,
-            False,
+            False
         )
 
         if approved:
@@ -364,14 +347,12 @@ if st.session_state.processed:
 
         approve = st.checkbox(
             "This mismatch is intentional",
-            key=f"approve_{io}",
+            key=f"approve_{io}"
         )
 
-        st.session_state.approved_mismatch[
+        st.session_state.approved[
             io
         ] = approve
-
-        # SORT LIs ALPHABETICALLY
 
         for li in sorted(
             lis,
@@ -380,58 +361,57 @@ if st.session_state.processed:
 
             li_id = li["li_id"]
 
-            c1, c2, c3 = st.columns([5, 2, 2])
+            c1, c2, c3 = st.columns([5,2,2])
 
             with c1:
                 st.write(li["li_name"])
 
             with c2:
                 st.write(
-                    f"€{li['prev_budget']:,.2f}"
+                    f"€{li['budget']:,.2f}"
                 )
 
             with c3:
 
-                current_val = st.session_state.jun_inputs.get(
+                current = st.session_state.jun_inputs.get(
                     li_id,
-                    li["prev_budget"],
+                    li["budget"]
                 )
 
-                new_val = st.text_input(
+                val = st.text_input(
                     f"{io}_{li_id}",
-                    value=str(current_val),
+                    value=str(current)
                 )
 
                 try:
 
                     st.session_state.jun_inputs[
                         li_id
-                    ] = float(new_val)
-
+                    ] = float(val)
                 except:
                     pass
-
-        # LIVE VALIDATION
 
         updated_total = round(
             sum(
                 st.session_state.jun_inputs.get(
                     li["li_id"],
-                    0,
+                    li["budget"]
                 )
                 for li in lis
             ),
-            2,
+            2
         )
 
         updated_diff = round(
             expected_total - updated_total,
-            2,
+            2
         )
 
         if abs(updated_diff) < 0.01:
 
-            st.success("✅ Now Matching")
+            st.success(
+                "✅ Now Matching"
+            )
 
         else:
 
@@ -445,23 +425,23 @@ if st.session_state.processed:
             "✅ All IOs are matching correctly"
         )
 
-# ─────────────────────────────────────────────────────────────────────
-# FINAL OUTPUT
-# ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# OUTPUT
+# ─────────────────────────────────────────────
 
-st.header("3. Final Output")
+if st.session_state.li_data:
 
-df_out = build_output(
-    month_start,
-    month_end,
-)
+    st.header("3. Final Output")
 
-if len(df_out) > 0:
+    df_out = build_output(
+        month_start,
+        month_end
+    )
 
     st.dataframe(
         df_out,
         use_container_width=True,
-        hide_index=True,
+        hide_index=True
     )
 
     csv = df_out.to_csv(index=False)
@@ -470,11 +450,5 @@ if len(df_out) > 0:
         "⬇️ Download CSV",
         csv,
         file_name="flight_extension.csv",
-        mime="text/csv",
-    )
-
-else:
-
-    st.info(
-        "Upload files and run validation."
+        mime="text/csv"
     )
